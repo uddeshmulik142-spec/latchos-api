@@ -1,16 +1,76 @@
-import base64
+import json
 import os
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Optional, List
 from datetime import datetime
 
 import httpx
+import psycopg2
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from anthropic import Anthropic
+from starlette.concurrency import run_in_threadpool
 
-app = FastAPI(title="LatchOS Compliance Intake API", version="1.0.0")
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+
+def get_db_connection():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL must be set to enable audit logging.")
+    return psycopg2.connect(database_url)
+
+
+def init_db():
+    conn = get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS gate_events (
+                        id SERIAL PRIMARY KEY,
+                        driver_name VARCHAR(255),
+                        license_number VARCHAR(255),
+                        compliance_status VARCHAR(50),
+                        scan_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+    finally:
+        conn.close()
+
+
+def log_gate_event(result: "ComplianceVerificationResult"):
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO gate_events (driver_name, license_number, compliance_status) "
+                    "VALUES (%s, %s, %s)",
+                    (result.driver_full_name, result.licence_number, result.verdict.value)
+                )
+    except psycopg2.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Database logging failed: {exc}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await run_in_threadpool(init_db)
+    yield
+
+
+app = FastAPI(
+    title="LatchOS Compliance Intake API",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # Enable CORS for browser requests from your frontend
 app.add_middleware(
@@ -20,8 +80,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-client = Anthropic()
 
 # --- Schema Definitions ---
 
@@ -85,16 +143,6 @@ async def trigger_gate_barrier_action(result: ComplianceVerificationResult, file
 
     return event_payload
 
-# --- Claude Extraction Engine ---
-
-EXTRACT_TOOL_NAME = "record_compliance_data"
-
-COMPLIANCE_TOOL = {
-    "name": EXTRACT_TOOL_NAME,
-    "description": "Extract parsed gate credentials and emit strict compliance verdict.",
-    "input_schema": ComplianceVerificationResult.model_json_schema()
-}
-
 SUPPORTED_MEDIA_TYPES = {
     "image/jpeg": "image/jpeg",
     "image/png": "image/png",
@@ -114,8 +162,6 @@ async def verify_credential(file: UploadFile = File(...)):
     if len(file_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 20MB limit.")
 
-    b64_data = base64.standard_b64encode(file_bytes).decode("utf-8")
-
     # Temporary Mock mode (used while waiting on live API credits)
     if os.getenv("MOCK_OCR", "true").lower() == "true":
         verification_result = ComplianceVerificationResult(
@@ -130,31 +176,13 @@ async def verify_credential(file: UploadFile = File(...)):
             verdict_reasons=["Valid Category C+E entitlement", "CPC active until 2028"]
         )
         
+        await run_in_threadpool(log_gate_event, verification_result)
+
         # Trigger gate dispatch action
         await trigger_gate_barrier_action(verification_result, file.filename)
         return verification_result
 
-    # Process Document vs Image blocks for Claude
-    if file.content_type == "application/pdf":
-        media_block = {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": b64_data
-            }
-        }
-    else:
-        media_block = {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": file.content_type,
-                "data": b64_data
-            }
-        }
-
-    system_prompt = (
+    prompt = (
         "You are the gate compliance intake engine for LatchOS. "
         "Inspect UK transport and industrial credentials (UK Driver Licences, Driver Qualification Cards / CPC, "
         "Goods in Transit (GIT) certificates, and Operator Licences). "
@@ -163,45 +191,33 @@ async def verify_credential(file: UploadFile = File(...)):
         "2. If expired, set verdict to 'EXPIRED'.\n"
         "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
         "4. If valid, set to 'PASSED'.\n"
-        "You must invoke the 'record_compliance_data' tool with the exact extracted parameters."
+        "Extract the driver's license details and determine compliance. "
+        "Follow the JSON schema strictly."
     )
 
     try:
-        response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
-            system=system_prompt,
-            tools=[COMPLIANCE_TOOL],
-            tool_choice={"type": "tool", "name": EXTRACT_TOOL_NAME},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        media_block,
-                        {
-                            "type": "text",
-                            "text": "Parse this transport gate document and return the structured compliance record."
-                        }
-                    ]
-                }
-            ]
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(data=file_bytes, mime_type=file.content_type),
+                prompt
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ComplianceVerificationResult
+            )
         )
+        verification_result = ComplianceVerificationResult.model_validate(json.loads(response.text))
 
-        tool_call = next(
-            (block for block in response.content if block.type == "tool_use" and block.name == EXTRACT_TOOL_NAME),
-            None
-        )
-
-        if not tool_call:
-            raise HTTPException(status_code=502, detail="Failed to receive structured tool response from Claude.")
-
-        verification_result = ComplianceVerificationResult(**tool_call.input)
+        await run_in_threadpool(log_gate_event, verification_result)
 
         # Trigger gate dispatch action
         await trigger_gate_barrier_action(verification_result, file.filename)
 
         return verification_result
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

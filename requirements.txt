@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 python-multipart
-anthropic
 pydantic
 httpx
+google-genai
+psycopg2-binary
