@@ -197,7 +197,7 @@ async def verify_credential(file: UploadFile = File(...)):
         )
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=[
                 types.Part.from_bytes(data=file_bytes, mime_type=file.content_type),
                 prompt
