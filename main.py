@@ -197,7 +197,7 @@ async def verify_credential(file: UploadFile = File(...)):
         )
 
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.5-flash",
             contents=[
                 types.Part.from_bytes(data=file_bytes, mime_type=file.content_type),
                 prompt
@@ -246,7 +246,7 @@ def get_gate_events():
             {
                 "id": row[0],
                 "driver_name": row[1],
-                "license_number": row[2],
+                "licence_number": row[2],
                 "status": row[3],
                 "timestamp": row[4].isoformat() if row[4] else None
             }
