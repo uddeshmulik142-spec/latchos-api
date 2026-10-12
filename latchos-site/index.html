@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LatchOS | Driver Verification</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background-color: #0d1117; color: #c9d1d9; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; margin: 0; }
+        .container { max-width: 640px; width: 100%; }
+        h1 { text-align: center; color: #fff; margin-bottom: 8px; }
+        p.subtitle { text-align: center; color: #8b949e; margin-bottom: 32px; }
+        
+        .upload-box { border: 2px dashed #30363d; border-radius: 12px; padding: 40px; text-align: center; background: #161b22; cursor: pointer; transition: 0.2s; position: relative; }
+        .upload-box:hover { border-color: #58a6ff; }
+        .upload-box input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; margin-top: 24px; display: none; }
+        .status-badge { float: right; padding: 4px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; border: 1px solid; }
+        .status-passed { background: rgba(35, 134, 54, 0.1); color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
+        .status-flagged { background: rgba(210, 153, 34, 0.1); color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+        .status-expired { background: rgba(248, 81, 73, 0.1); color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+        
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+        .field { background: #0d1117; border: 1px solid #30363d; padding: 12px; border-radius: 6px; }
+        .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
+        .value { font-weight: bold; color: #fff; }
+        .notes { margin-top: 16px; font-size: 0.9rem; color: #8b949e; }
+        
+        .audit-table { width: 100%; border-collapse: collapse; margin-top: 32px; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
+        .audit-table th, .audit-table td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; font-size: 0.9rem; }
+        .audit-table th { background: #0d1117; color: #8b949e; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Driver & Vehicle Compliance Check</h1>
+        <p class="subtitle">Drop UK Driving Licences, CPC cards, or tap to open camera.</p>
+        
+        <div class="upload-box" id="dropzone">
+            <input type="file" accept="image/*" capture="environment" id="credential-upload">
+            <div id="upload-text">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b949e" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                <p style="margin: 8px 0 0; color: #c9d1d9;"><b>Tap to scan</b> or drag & drop document</p>
+                <p style="margin: 4px 0 0; font-size: 0.8rem; color: #8b949e;">PNG, JPEG, WebP</p>
+            </div>
+        </div>
+
+        <div class="card" id="result-card">
+            <h3 style="margin:0; display:inline-block; color:#fff;">Verification Result</h3>
+            <span id="status-badge" class="status-badge">PENDING</span>
+            
+            <div class="grid">
+                <div class="field">
+                    <div class="label">Driver Name</div>
+                    <div class="value" id="res-name">N/A</div>
+                </div>
+                <div class="field">
+                    <div class="label">Licence No.</div>
+                    <div class="value" id="res-licence">N/A</div>
+                </div>
+            </div>
+            <div class="notes" id="res-notes"></div>
+        </div>
+
+        <table class="audit-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Driver</th>
+                    <th>Licence</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="events-table-body">
+                <tr><td colspan="4" style="text-align:center; color:#8b949e;">Loading events...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const API_URL = "https://latchos-api.onrender.com";
+
+        async function loadGateEvents() {
+            const tbody = document.getElementById("events-table-body");
+            try {
+                const res = await fetch(`${API_URL}/api/v1/gate-events`);
+                const data = await res.json();
+
+                if (!data.events || data.events.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No recent events.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.events.map(ev => {
+                    const time = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+                    let color = ev.status === 'PASSED' ? '#3fb950' : (ev.status === 'EXPIRED' ? '#f85149' : '#d29922');
+                    const licence = ev.licence_number || ev.license_number || 'N/A';
+                    return `
+                        <tr>
+                            <td style="color:#8b949e;">${time}</td>
+                            <td>${ev.driver_name || 'N/A'}</td>
+                            <td style="font-family:monospace;">${licence}</td>
+                            <td style="color:${color}; font-weight:bold;">${ev.status}</td>
+                        </tr>
+                    `;
+                }).join("");
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#f85149;">Unable to load events.</td></tr>';
+                console.error(err);
+            }
+        }
+
+        async function verifyLicence(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const badge = document.getElementById('status-badge');
+            const resultCard = document.getElementById('result-card');
+            const nameEl = document.getElementById('res-name');
+            const licenceEl = document.getElementById('res-licence');
+            const notesEl = document.getElementById('res-notes');
+
+            badge.textContent = 'CHECKING';
+            badge.className = 'status-badge status-flagged';
+            resultCard.style.display = 'block';
+            nameEl.textContent = 'Processing…';
+            licenceEl.textContent = '—';
+            notesEl.textContent = 'Uploading and verifying document…';
+
+            try {
+                const res = await fetch(`${API_URL}/api/v1/verify-credential`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || 'Verification failed.');
+                }
+
+                const status = data.status || 'PASSED';
+                const badgeClass = status === 'PASSED' ? 'status-passed' : (status === 'EXPIRED' ? 'status-expired' : 'status-flagged');
+                badge.textContent = status;
+                badge.className = `status-badge ${badgeClass}`;
+
+                nameEl.textContent = data.driver_full_name || data.driver_name || 'N/A';
+                licenceEl.textContent = data.licence_number || data.license_number || 'N/A';
+                notesEl.textContent = data.notes || 'Document verified successfully.';
+            } catch (err) {
+                badge.textContent = 'ERROR';
+                badge.className = 'status-badge status-expired';
+                nameEl.textContent = 'N/A';
+                licenceEl.textContent = 'N/A';
+                notesEl.textContent = err.message || 'Unable to verify this document.';
+            }
+        }
+
+        document.getElementById('credential-upload').addEventListener('change', (event) => {
+            const file = event.target.files && event.target.files[0];
+            if (file) verifyLicence(file);
+        });
+
+        document.getElementById('dropzone').addEventListener('dragover', (event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+        });
+
+        document.getElementById('dropzone').addEventListener('drop', (event) => {
+            event.preventDefault();
+            const file = event.dataTransfer.files && event.dataTransfer.files[0];
+            if (file) verifyLicence(file);
+        });
+
+        loadGateEvents();
+    </script>
+</body>
+</html>

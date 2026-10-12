@@ -99,6 +99,7 @@ class DocumentType(str, Enum):
 class ComplianceVerificationResult(BaseModel):
     document_type: DocumentType = Field(description="Detected document classification")
     driver_full_name: Optional[str] = Field(None, description="Full name of driver or policy holder")
+    driver_last_name: Optional[str] = Field(None, description="Surname of driver (required for checksum)")
     licence_number: Optional[str] = Field(None, description="UK driving licence number or CPC badge number")
     cpc_expiry_date: Optional[str] = Field(None, description="YYYY-MM-DD format if present")
     operator_licence_valid: Optional[bool] = Field(None, description="Whether operator licence status is valid")
@@ -106,6 +107,25 @@ class ComplianceVerificationResult(BaseModel):
     policy_expiry_date: Optional[str] = Field(None, description="Insurance/accreditation expiration date in YYYY-MM-DD")
     verdict: ComplianceStatus = Field(description="PASSED if active, EXPIRED if past validity, FLAGGED if blurred/altered/suspicious")
     verdict_reasons: List[str] = Field(default_factory=list, description="Reasoning behind verdict")
+
+
+def validate_uk_licence_checksum(licence_no: str, last_name: str) -> bool:
+    """Validates the mathematical structure of a UK Driving Licence Number."""
+    if not licence_no or not last_name or len(licence_no) < 16:
+        return False
+
+    expected_prefix = last_name[:5].upper().ljust(5, "9")
+    actual_prefix = licence_no[:5].upper()
+    if expected_prefix != actual_prefix:
+        return False
+
+    month = licence_no[6:8]
+    if not month.isdigit():
+        return False
+
+    month_val = int(month)
+    return 1 <= month_val <= 12 or 51 <= month_val <= 62
+
 
 # --- Gate Dispatch Configuration ---
 
@@ -169,6 +189,7 @@ async def verify_credential(file: UploadFile = File(...)):
             verification_result = ComplianceVerificationResult(
                 document_type=DocumentType.UK_DRIVING_LICENCE,
                 driver_full_name="JOHN SMITH",
+                driver_last_name="SMITH",
                 licence_number="SMITH705234JD9IJ",
                 cpc_expiry_date="2028-09-15",
                 operator_licence_valid=True,
@@ -179,7 +200,6 @@ async def verify_credential(file: UploadFile = File(...)):
             )
 
             await run_in_threadpool(log_gate_event, verification_result)
-
             await trigger_gate_barrier_action(verification_result, file.filename)
             return verification_result
 
@@ -191,9 +211,9 @@ async def verify_credential(file: UploadFile = File(...)):
             "1. Check all expiration dates against the current date (October 2026).\n"
             "2. If expired, set verdict to 'EXPIRED'.\n"
             "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
-            "4. If valid, set to 'PASSED'.\n"
-            "Extract the driver's license details and determine compliance. "
-            "Follow the JSON schema strictly."
+            "4. Extract the driver's full name, AND extract just their surname into the 'driver_last_name' field.\n"
+            "5. If valid, set to 'PASSED'.\n"
+            "Extract the details and determine compliance. Follow the JSON schema strictly."
         )
 
         response = client.models.generate_content(
@@ -210,8 +230,21 @@ async def verify_credential(file: UploadFile = File(...)):
         clean_json = response.text.strip().removeprefix("```json").removesuffix("```").strip()
         verification_result = ComplianceVerificationResult.model_validate(json.loads(clean_json))
 
-        await run_in_threadpool(log_gate_event, verification_result)
+        # --- Inject the Zero-Cost Checksum Validator ---
+        if verification_result.document_type == DocumentType.UK_DRIVING_LICENCE:
+            if verification_result.licence_number and verification_result.driver_last_name:
+                is_valid_format = validate_uk_licence_checksum(
+                    verification_result.licence_number, 
+                    verification_result.driver_last_name
+                )
+                if not is_valid_format:
+                    verification_result.verdict = ComplianceStatus.FLAGGED
+                    verification_result.verdict_reasons.append("SYSTEM FLAG: Licence number checksum failed. Potential forgery.")
+            else:
+                verification_result.verdict = ComplianceStatus.FLAGGED
+                verification_result.verdict_reasons.append("SYSTEM FLAG: Missing data for cryptographic checksum.")
 
+        await run_in_threadpool(log_gate_event, verification_result)
         await trigger_gate_barrier_action(verification_result, file.filename)
         return verification_result
 
