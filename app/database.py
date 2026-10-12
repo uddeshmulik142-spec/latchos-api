@@ -1,7 +1,6 @@
 """Database connectivity layer supporting both asyncpg (preferred) and psycopg2 (fallback).
 
-This allows zero-downtime transition: if asyncpg is installed it uses connection pooling,
-otherwise it falls back to psycopg2 via starlette threadpool.
+Manages organizations and tenant-scoped audit logging for gate events.
 """
 
 import os
@@ -39,12 +38,36 @@ def _get_sync_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
+SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS organizations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        slug VARCHAR(100) UNIQUE NOT NULL,
+        access_key VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS gate_events (
+        id SERIAL PRIMARY KEY,
+        org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+        driver_name VARCHAR(255),
+        license_number VARCHAR(255),
+        compliance_status VARCHAR(50),
+        scan_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Seed default demo depot organization if none exists
+    INSERT INTO organizations (id, name, slug, access_key)
+    VALUES (1, 'Main Depot', 'main-depot', 'demo-depot-2026')
+    ON CONFLICT (id) DO NOTHING;
+"""
+
+
 async def init_db() -> None:
-    """Initialize database and ensure the schema exists."""
+    """Initialize database and ensure the multi-tenant schema exists."""
     global _asyncpg_pool
 
     if not DATABASE_URL:
-        # Don't crash at startup if DB is unset in local dev/testing
         print("⚠️ DATABASE_URL is not set — audit logging will be unavailable.")
         return
 
@@ -54,16 +77,13 @@ async def init_db() -> None:
                 DATABASE_URL, min_size=2, max_size=10
             )
             async with _asyncpg_pool.acquire() as conn:
+                await conn.execute(SCHEMA_SQL)
+                # Ensure org_id column exists if gate_events was created previously
                 await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS gate_events (
-                        id SERIAL PRIMARY KEY,
-                        driver_name VARCHAR(255),
-                        license_number VARCHAR(255),
-                        compliance_status VARCHAR(50),
-                        scan_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
+                    ALTER TABLE gate_events
+                    ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
                 """)
-            print(" Connected to PostgreSQL via asyncpg (pooled)")
+            print(" Connected to PostgreSQL via asyncpg (pooled, multi-tenant ready)")
             return
         except Exception as exc:
             print(f"⚠️ asyncpg pool creation failed: {exc}, attempting psycopg2 fallback")
@@ -74,20 +94,16 @@ async def init_db() -> None:
             try:
                 with conn:
                     with conn.cursor() as cur:
+                        cur.execute(SCHEMA_SQL)
                         cur.execute("""
-                            CREATE TABLE IF NOT EXISTS gate_events (
-                                id SERIAL PRIMARY KEY,
-                                driver_name VARCHAR(255),
-                                license_number VARCHAR(255),
-                                compliance_status VARCHAR(50),
-                                scan_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                            )
+                            ALTER TABLE gate_events
+                            ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
                         """)
             finally:
                 conn.close()
 
         await run_in_threadpool(_sync_init)
-        print(" Connected to PostgreSQL via psycopg2 (threadpool fallback)")
+        print(" Connected to PostgreSQL via psycopg2 (threadpool fallback, multi-tenant ready)")
     else:
         raise RuntimeError("Neither asyncpg nor psycopg2 is available.")
 
@@ -106,7 +122,6 @@ async def execute_query(query: str, *args) -> None:
         async with _asyncpg_pool.acquire() as conn:
             await conn.execute(query, *args)
     elif _HAS_PSYCOPG2:
-        # Convert $1, $2 asyncpg style to %s for psycopg2
         sql = query
         for i in range(len(args), 0, -1):
             sql = sql.replace(f"${i}", "%s")

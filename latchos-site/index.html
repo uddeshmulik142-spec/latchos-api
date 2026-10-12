@@ -2,179 +2,681 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LatchOS | Driver Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LatchOS | Industrial Gate Compliance Kiosk</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background-color: #0d1117; color: #c9d1d9; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; margin: 0; }
-        .container { max-width: 640px; width: 100%; }
-        h1 { text-align: center; color: #fff; margin-bottom: 8px; }
-        p.subtitle { text-align: center; color: #8b949e; margin-bottom: 32px; }
-        
-        .upload-box { border: 2px dashed #30363d; border-radius: 12px; padding: 40px; text-align: center; background: #161b22; cursor: pointer; transition: 0.2s; position: relative; }
-        .upload-box:hover { border-color: #58a6ff; }
-        .upload-box input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-        
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; margin-top: 24px; display: none; }
-        .status-badge { float: right; padding: 4px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; border: 1px solid; }
-        .status-passed { background: rgba(35, 134, 54, 0.1); color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
-        .status-flagged { background: rgba(210, 153, 34, 0.1); color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
-        .status-expired { background: rgba(248, 81, 73, 0.1); color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
-        
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
-        .field { background: #0d1117; border: 1px solid #30363d; padding: 12px; border-radius: 6px; }
-        .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
-        .value { font-weight: bold; color: #fff; }
-        .notes { margin-top: 16px; font-size: 0.9rem; color: #8b949e; }
-        
-        .audit-table { width: 100%; border-collapse: collapse; margin-top: 32px; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
-        .audit-table th, .audit-table td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; font-size: 0.9rem; }
-        .audit-table th { background: #0d1117; color: #8b949e; }
+        :root {
+            --bg-base: #090d16;
+            --bg-surface: #111726;
+            --bg-card: #161f33;
+            --border: #232f48;
+            --border-focus: #3b82f6;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --success: #10b981;
+            --success-bg: rgba(16, 185, 129, 0.12);
+            --danger: #ef4444;
+            --danger-bg: rgba(239, 68, 68, 0.12);
+            --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.12);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px 16px 48px;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .shell {
+            width: 100%;
+            max-width: 840px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Top Header & Depot Badge */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 4px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            color: #fff;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .brand-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #fff;
+        }
+
+        .brand-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .depot-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 9999px;
+            padding: 6px 14px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--success);
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.9); }
+        }
+
+        /* Navigation Tabs */
+        .tabs {
+            display: flex;
+            background: var(--bg-surface);
+            padding: 4px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            gap: 4px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .tab-btn.active {
+            background: var(--bg-card);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border);
+        }
+
+        /* Views */
+        .view-content {
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .view-content.active {
+            display: flex;
+        }
+
+        /* Scanner Kiosk View */
+        .scanner-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 20px;
+        }
+
+        .kiosk-dropzone {
+            width: 100%;
+            border: 2px dashed #334155;
+            border-radius: 14px;
+            padding: 44px 20px;
+            background: var(--bg-card);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s ease;
+        }
+
+        .kiosk-dropzone:hover, .kiosk-dropzone.dragover {
+            border-color: var(--accent);
+            background: rgba(37, 99, 235, 0.05);
+        }
+
+        .kiosk-dropzone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .scan-icon-wrap {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+        }
+
+        .scan-action-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 6px;
+        }
+
+        .scan-action-sub {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Big Verdict Banner */
+        .verdict-banner {
+            display: none;
+            width: 100%;
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid;
+            animation: slideDown 0.25s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .verdict-banner.passed {
+            background: var(--success-bg);
+            border-color: rgba(16, 185, 129, 0.4);
+        }
+        .verdict-banner.expired {
+            background: var(--danger-bg);
+            border-color: rgba(239, 68, 68, 0.4);
+        }
+        .verdict-banner.flagged {
+            background: var(--warning-bg);
+            border-color: rgba(245, 158, 11, 0.4);
+        }
+
+        .verdict-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .verdict-chip {
+            padding: 6px 16px;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+        }
+
+        .verdict-chip.passed { background: var(--success); color: #022c22; }
+        .verdict-chip.expired { background: var(--danger); color: #450a0a; }
+        .verdict-chip.flagged { background: var(--warning); color: #451a03; }
+
+        .gate-relay-status {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .gate-relay-status.passed { color: var(--success); }
+        .gate-relay-status.expired { color: var(--danger); }
+        .gate-relay-status.flagged { color: var(--warning); }
+
+        .verdict-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .info-cell {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            padding: 12px 14px;
+            border-radius: 8px;
+            text-align: left;
+        }
+
+        .cell-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .cell-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #fff;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .verdict-notes {
+            text-align: left;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 12px;
+            line-height: 1.5;
+        }
+
+        /* Audit Log View */
+        .table-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .table-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .btn-export {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .btn-export:hover {
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .table-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+
+        .audit-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .audit-table th {
+            background: var(--bg-card);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 0.72rem;
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .audit-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-main);
+        }
+
+        .audit-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .licence-badge {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-base);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            font-size: 0.8rem;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.75rem;
+            letter-spacing: 0.03em;
+        }
+
+        .status-pill.PASSED { background: var(--success-bg); color: var(--success); }
+        .status-pill.EXPIRED { background: var(--danger-bg); color: var(--danger); }
+        .status-pill.FLAGGED { background: var(--warning-bg); color: var(--warning); }
+
+        footer {
+            margin-top: 32px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Driver & Vehicle Compliance Check</h1>
-        <p class="subtitle">Drop UK Driving Licences, CPC cards, or tap to open camera.</p>
-        
-        <div class="upload-box" id="dropzone">
-            <input type="file" accept="image/*,application/pdf" capture="environment" id="credential-upload">
-            <div id="upload-text">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b949e" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                <p style="margin: 8px 0 0; color: #c9d1d9;"><b>Tap to scan</b> or drag & drop document</p>
-                <p style="margin: 4px 0 0; font-size: 0.8rem; color: #8b949e;">PNG, JPEG, WebP, PDF</p>
+    <div class="shell">
+        <header>
+            <div class="brand">
+                <div class="brand-logo">L</div>
+                <div>
+                    <div class="brand-title">LatchOS Gate</div>
+                    <div class="brand-sub">DVSA Logistics Compliance</div>
+                </div>
+            </div>
+            <div class="depot-pill">
+                <div class="live-dot"></div>
+                <span id="depot-display-name">Main Depot</span>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" id="tab-kiosk-btn" onclick="switchTab('kiosk')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                Gate Kiosk
+            </button>
+            <button class="tab-btn" id="tab-log-btn" onclick="switchTab('log')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Depot Audit Log
+            </button>
+        </div>
+
+        <!-- 1. Kiosk View -->
+        <div class="view-content active" id="view-kiosk">
+            <div class="scanner-card">
+                <div class="kiosk-dropzone" id="kiosk-dropzone">
+                    <input type="file" accept="image/*,application/pdf" capture="environment" id="file-input">
+                    <div class="scan-icon-wrap">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                    </div>
+                    <div class="scan-action-title">Tap to Scan Credential</div>
+                    <div class="scan-action-sub">UK Driving Licence, CPC Card, or Goods-in-Transit Certificate</div>
+                </div>
+
+                <!-- Big Result Banner -->
+                <div class="verdict-banner" id="verdict-banner">
+                    <div class="verdict-header">
+                        <div class="verdict-chip" id="banner-chip">CHECKING</div>
+                        <div class="gate-relay-status" id="relay-status">BARRIER: LOCKED</div>
+                    </div>
+                    <div class="verdict-grid">
+                        <div class="info-cell">
+                            <div class="cell-label">Driver Name</div>
+                            <div class="cell-value" id="val-name">—</div>
+                        </div>
+                        <div class="info-cell">
+                            <div class="cell-label">Licence / Badge No</div>
+                            <div class="cell-value" id="val-licence">—</div>
+                        </div>
+                    </div>
+                    <div class="verdict-notes" id="val-notes">Processing document scan...</div>
+                </div>
             </div>
         </div>
 
-        <div class="card" id="result-card">
-            <h3 style="margin:0; display:inline-block; color:#fff;">Verification Result</h3>
-            <span id="status-badge" class="status-badge">PENDING</span>
-            
-            <div class="grid">
-                <div class="field">
-                    <div class="label">Driver Name</div>
-                    <div class="value" id="res-name">N/A</div>
-                </div>
-                <div class="field">
-                    <div class="label">Licence No.</div>
-                    <div class="value" id="res-licence">N/A</div>
-                </div>
+        <!-- 2. Audit Log View -->
+        <div class="view-content" id="view-log">
+            <div class="table-controls">
+                <div class="table-title">Recent Gate Events</div>
+                <button class="btn-export" onclick="exportAuditCSV()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                    Export CSV
+                </button>
             </div>
-            <div class="notes" id="res-notes"></div>
+            <div class="table-card">
+                <table class="audit-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Driver</th>
+                            <th>Licence Number</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="audit-table-body">
+                        <tr><td colspan="4" style="text-align:center; color:var(--text-muted);">Loading live events...</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <table class="audit-table">
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Driver</th>
-                    <th>Licence</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody id="events-table-body">
-                <tr><td colspan="4" style="text-align:center; color:#8b949e;">Loading events...</td></tr>
-            </tbody>
-        </table>
+        <footer>
+            LatchOS Gate Engine v2.0 • Zero-Cost Cloud Architecture • Powered by Gemini Vision
+        </footer>
     </div>
 
     <script>
-        const API_URL = "https://latchos-api.onrender.com";
+        const API_BASE = "https://latchos-api.onrender.com";
 
-        async function loadGateEvents() {
-            const tbody = document.getElementById("events-table-body");
+        // Extract depot access key from URL (e.g. https://latchos.online/?key=demo-depot-2026)
+        const urlParams = new URLSearchParams(window.location.search);
+        const DEPOT_KEY = urlParams.get('key') || 'demo-depot-2026';
+        let cachedEvents = [];
+
+        function switchTab(tab) {
+            document.getElementById('tab-kiosk-btn').classList.toggle('active', tab === 'kiosk');
+            document.getElementById('tab-log-btn').classList.toggle('active', tab === 'log');
+            document.getElementById('view-kiosk').classList.toggle('active', tab === 'kiosk');
+            document.getElementById('view-log').classList.toggle('active', tab === 'log');
+
+            if (tab === 'log') {
+                loadAuditLogs();
+            }
+        }
+
+        async function loadAuditLogs() {
+            const tbody = document.getElementById("audit-table-body");
             try {
-                const res = await fetch(`${API_URL}/api/v1/gate-events`);
+                const res = await fetch(`${API_BASE}/api/v1/gate-events?key=${encodeURIComponent(DEPOT_KEY)}`);
                 const data = await res.json();
 
-                if (!data.events || data.events.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No recent events.</td></tr>';
+                if (data.depot_name) {
+                    document.getElementById('depot-display-name').textContent = data.depot_name;
+                }
+
+                cachedEvents = data.events || [];
+
+                if (cachedEvents.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:24px;">No gate events recorded for this depot.</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = data.events.map(ev => {
+                tbody.innerHTML = cachedEvents.map(ev => {
                     const time = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
-                    let color = ev.status === 'PASSED' ? '#3fb950' : (ev.status === 'EXPIRED' ? '#f85149' : '#d29922');
-                    const licence = ev.licence_number || ev.license_number || 'N/A';
+                    const date = ev.timestamp ? new Date(ev.timestamp).toLocaleDateString([], {month: 'short', day: 'numeric'}) : '';
+                    const licence = ev.licence_number || 'N/A';
                     return `
                         <tr>
-                            <td style="color:#8b949e;">${time}</td>
-                            <td>${ev.driver_name || 'N/A'}</td>
-                            <td style="font-family:monospace;">${licence}</td>
-                            <td style="color:${color}; font-weight:bold;">${ev.status}</td>
+                            <td style="color:var(--text-muted); white-space:nowrap;">${date} ${time}</td>
+                            <td style="font-weight:600;">${ev.driver_name || 'Unknown / Unread'}</td>
+                            <td><span class="licence-badge">${licence}</span></td>
+                            <td><span class="status-pill ${ev.status}">${ev.status}</span></td>
                         </tr>
                     `;
                 }).join("");
             } catch (err) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#f85149;">Unable to load events.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:24px;">Failed to load audit history.</td></tr>';
                 console.error(err);
             }
         }
 
-        async function verifyLicence(file) {
+        async function verifyCredential(file) {
+            const banner = document.getElementById('verdict-banner');
+            const chip = document.getElementById('banner-chip');
+            const relay = document.getElementById('relay-status');
+            const nameEl = document.getElementById('val-name');
+            const licenceEl = document.getElementById('val-licence');
+            const notesEl = document.getElementById('val-notes');
+
+            banner.style.display = 'block';
+            banner.className = 'verdict-banner flagged';
+            chip.className = 'verdict-chip flagged';
+            chip.textContent = 'ANALYZING...';
+            relay.className = 'gate-relay-status flagged';
+            relay.textContent = 'BARRIER: HOLD';
+            nameEl.textContent = 'Scanning...';
+            licenceEl.textContent = 'Extracting...';
+            notesEl.textContent = 'Validating DVLA & CPC entitlements via vision core...';
+
             const formData = new FormData();
             formData.append('file', file);
 
-            const badge = document.getElementById('status-badge');
-            const resultCard = document.getElementById('result-card');
-            const nameEl = document.getElementById('res-name');
-            const licenceEl = document.getElementById('res-licence');
-            const notesEl = document.getElementById('res-notes');
-
-            badge.textContent = 'CHECKING';
-            badge.className = 'status-badge status-flagged';
-            resultCard.style.display = 'block';
-            nameEl.textContent = 'Processing…';
-            licenceEl.textContent = '—';
-            notesEl.textContent = 'Uploading and verifying document…';
-
             try {
-                const res = await fetch(`${API_URL}/api/v1/verify-credential`, {
+                const res = await fetch(`${API_BASE}/api/v1/verify-credential?key=${encodeURIComponent(DEPOT_KEY)}`, {
                     method: 'POST',
                     body: formData
                 });
                 const data = await res.json();
 
                 if (!res.ok) {
-                    throw new Error(data.detail || 'Verification failed.');
+                    throw new Error(data.detail || 'Verification request failed.');
                 }
 
-                const status = data.verdict || 'PASSED';
-                const badgeClass = status === 'PASSED' ? 'status-passed' : (status === 'EXPIRED' ? 'status-expired' : 'status-flagged');
-                badge.textContent = status;
-                badge.className = `status-badge ${badgeClass}`;
+                const verdict = data.verdict || 'FLAGGED';
+                const verdictClass = verdict.toLowerCase();
+
+                banner.className = `verdict-banner ${verdictClass}`;
+                chip.className = `verdict-chip ${verdictClass}`;
+                chip.textContent = verdict;
+
+                relay.className = `gate-relay-status ${verdictClass}`;
+                relay.textContent = verdict === 'PASSED' ? 'BARRIER: OPEN (RELAY 1)' : 'BARRIER: LOCKED (HOLD)';
 
                 nameEl.textContent = data.driver_full_name || 'N/A';
                 licenceEl.textContent = data.licence_number || 'N/A';
-                const reasons = Array.isArray(data.verdict_reasons) && data.verdict_reasons.length > 0
-                    ? data.verdict_reasons.join('; ')
-                    : 'Document verified successfully.';
-                notesEl.textContent = reasons;
+
+                const notes = (data.verdict_reasons && data.verdict_reasons.length > 0)
+                    ? data.verdict_reasons.join(' • ')
+                    : 'Credential passed all algorithmic & OCR checks.';
+                notesEl.textContent = notes;
+
             } catch (err) {
-                badge.textContent = 'ERROR';
-                badge.className = 'status-badge status-expired';
-                nameEl.textContent = 'N/A';
-                licenceEl.textContent = 'N/A';
-                notesEl.textContent = err.message || 'Unable to verify this document.';
+                banner.className = 'verdict-banner expired';
+                chip.className = 'verdict-chip expired';
+                chip.textContent = 'ERROR';
+                relay.className = 'gate-relay-status expired';
+                relay.textContent = 'BARRIER: LOCKED';
+                nameEl.textContent = 'Failed';
+                licenceEl.textContent = '—';
+                notesEl.textContent = err.message || 'Verification failed. Try scanning again.';
             }
         }
 
-        document.getElementById('credential-upload').addEventListener('change', (event) => {
-            const file = event.target.files && event.target.files[0];
-            if (file) verifyLicence(file);
+        function exportAuditCSV() {
+            if (!cachedEvents || cachedEvents.length === 0) {
+                alert('No audit events available to export.');
+                return;
+            }
+
+            const headers = ['ID', 'Driver Name', 'Licence Number', 'Compliance Status', 'Timestamp'];
+            const rows = cachedEvents.map(e => [
+                e.id,
+                `"${(e.driver_name || '').replace(/"/g, '""')}"`,
+                `"${(e.licence_number || '').replace(/"/g, '""')}"`,
+                e.status,
+                e.timestamp
+            ]);
+
+            const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', `latchos_gate_audit_${new Date().toISOString().slice(0, 10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // File drop & input handlers
+        const fileInput = document.getElementById('file-input');
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) verifyCredential(file);
         });
 
-        document.getElementById('dropzone').addEventListener('dragover', (event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'copy';
+        const dropzone = document.getElementById('kiosk-dropzone');
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            const file = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (file) verifyCredential(file);
         });
 
-        document.getElementById('dropzone').addEventListener('drop', (event) => {
-            event.preventDefault();
-            const file = event.dataTransfer.files && event.dataTransfer.files[0];
-            if (file) verifyLicence(file);
-        });
-
-        loadGateEvents();
+        // Initialize audit log in background to grab depot name
+        loadAuditLogs();
     </script>
 </body>
 </html>

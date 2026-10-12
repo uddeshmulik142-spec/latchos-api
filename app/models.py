@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -31,9 +32,18 @@ class ComplianceVerificationResult(BaseModel):
     verdict_reasons: list[str] = Field(default_factory=list, description="Reasoning behind verdict")
 
 
+class Organization(BaseModel):
+    id: int
+    name: str
+    slug: str
+    access_key: str
+    created_at: Optional[datetime] = None
+
+
 class GateEvent(BaseModel):
     id: int
-    driver_name: Optional[str]
-    licence_number: Optional[str]
+    org_id: Optional[int] = None
+    driver_name: Optional[str] = None
+    licence_number: Optional[str] = None
     status: str
-    timestamp: Optional[str]
+    timestamp: Optional[str] = None

@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.config import MAX_FILE_SIZE_BYTES, SUPPORTED_MEDIA_TYPES
 from app.database import execute_query
-from app.dependencies import check_rate_limit, verify_api_key
-from app.models import ComplianceVerificationResult
+from app.dependencies import check_rate_limit, resolve_organization
+from app.models import ComplianceVerificationResult, Organization
 from app.services.gate import trigger_gate_barrier_action
 from app.services.ocr import verify_document
 
@@ -13,9 +13,12 @@ router = APIRouter(prefix="/api/v1", tags=["credentials"])
 @router.post(
     "/verify-credential",
     response_model=ComplianceVerificationResult,
-    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit)],
 )
-async def verify_credential(file: UploadFile = File(...)):
+async def verify_credential(
+    file: UploadFile = File(...),
+    org: Organization = Depends(resolve_organization),
+):
     if file.content_type not in SUPPORTED_MEDIA_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -32,11 +35,12 @@ async def verify_credential(file: UploadFile = File(...)):
     try:
         result = await verify_document(file_bytes, file.content_type)
 
-        # Log to DB (non-fatal if database is unconfigured/down)
+        # Log to DB under the tenant's organization ID
         try:
             await execute_query(
-                "INSERT INTO gate_events (driver_name, license_number, compliance_status) "
-                "VALUES ($1, $2, $3)",
+                "INSERT INTO gate_events (org_id, driver_name, license_number, compliance_status) "
+                "VALUES ($1, $2, $3, $4)",
+                org.id,
                 result.driver_full_name,
                 result.licence_number,
                 result.verdict.value,

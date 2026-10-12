@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from google import genai
 from google.genai import types
@@ -13,18 +14,23 @@ from app.services.validation import validate_uk_licence_checksum
 
 _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-COMPLIANCE_PROMPT = (
-    "You are the gate compliance intake engine for LatchOS. "
-    "Inspect UK transport and industrial credentials (UK Driver Licences, Driver Qualification Cards / CPC, "
-    "Goods in Transit (GIT) certificates, and Operator Licences). "
-    "Strict rules:\n"
-    "1. Check all expiration dates against the current date (October 2026).\n"
-    "2. If expired, set verdict to 'EXPIRED'.\n"
-    "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
-    "4. Extract the driver's full name, AND extract just their surname into the 'driver_last_name' field.\n"
-    "5. If valid, set to 'PASSED'.\n"
-    "Extract the details and determine compliance. Follow the JSON schema strictly."
-)
+
+def get_compliance_prompt() -> str:
+    """Generate dynamic compliance prompt with the real current month and year."""
+    current_date_str = datetime.now(timezone.utc).strftime("%B %Y")
+    return (
+        "You are the gate compliance intake engine for LatchOS. "
+        "Inspect UK transport and industrial credentials (UK Driver Licences, Driver Qualification Cards / CPC, "
+        "Goods in Transit (GIT) certificates, and Operator Licences). "
+        "Strict rules:\n"
+        f"1. Check all expiration dates against the current date ({current_date_str}).\n"
+        "2. If expired, set verdict to 'EXPIRED'.\n"
+        "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
+        "4. Extract the driver's full name, AND extract just their surname into the 'driver_last_name' field.\n"
+        "5. If valid, set to 'PASSED'.\n"
+        "Extract the details and determine compliance. Follow the JSON schema strictly."
+    )
+
 
 MOCK_RESULT = ComplianceVerificationResult(
     document_type=DocumentType.UK_DRIVING_LICENCE,
@@ -48,11 +54,13 @@ async def verify_document(file_bytes: bytes, mime_type: str) -> ComplianceVerifi
     if _client is None:
         raise RuntimeError("GEMINI_API_KEY is not set — cannot run live OCR.")
 
+    prompt = get_compliance_prompt()
+
     response = _client.models.generate_content(
         model=GEMINI_MODEL,
         contents=[
             types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            COMPLIANCE_PROMPT,
+            prompt,
         ],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
