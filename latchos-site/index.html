@@ -37,11 +37,11 @@
         <p class="subtitle">Drop UK Driving Licences, CPC cards, or tap to open camera.</p>
         
         <div class="upload-box" id="dropzone">
-            <input type="file" accept="image/*" capture="environment" id="credential-upload">
+            <input type="file" accept="image/*,application/pdf" capture="environment" id="credential-upload">
             <div id="upload-text">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b949e" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
                 <p style="margin: 8px 0 0; color: #c9d1d9;"><b>Tap to scan</b> or drag & drop document</p>
-                <p style="margin: 4px 0 0; font-size: 0.8rem; color: #8b949e;">PNG, JPEG, WebP</p>
+                <p style="margin: 4px 0 0; font-size: 0.8rem; color: #8b949e;">PNG, JPEG, WebP, PDF</p>
             </div>
         </div>
 
@@ -134,18 +134,21 @@
                 });
                 const data = await res.json();
 
-                if (!res.ok || !data.success) {
-                    throw new Error(data.message || 'Verification failed.');
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Verification failed.');
                 }
 
-                const status = data.status || 'PASSED';
+                const status = data.verdict || 'PASSED';
                 const badgeClass = status === 'PASSED' ? 'status-passed' : (status === 'EXPIRED' ? 'status-expired' : 'status-flagged');
                 badge.textContent = status;
                 badge.className = `status-badge ${badgeClass}`;
 
-                nameEl.textContent = data.driver_full_name || data.driver_name || 'N/A';
-                licenceEl.textContent = data.licence_number || data.license_number || 'N/A';
-                notesEl.textContent = data.notes || 'Document verified successfully.';
+                nameEl.textContent = data.driver_full_name || 'N/A';
+                licenceEl.textContent = data.licence_number || 'N/A';
+                const reasons = Array.isArray(data.verdict_reasons) && data.verdict_reasons.length > 0
+                    ? data.verdict_reasons.join('; ')
+                    : 'Document verified successfully.';
+                notesEl.textContent = reasons;
             } catch (err) {
                 badge.textContent = 'ERROR';
                 badge.className = 'status-badge status-expired';
