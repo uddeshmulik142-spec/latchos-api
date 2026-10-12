@@ -227,3 +227,36 @@ async def verify_credential(file: UploadFile = File(...)):
 @app.get("/health")
 def health():
     return {"status": "ok", "engine": "LatchOS Vision Core v1"}
+
+
+@app.get("/api/v1/gate-events")
+def get_gate_events():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, driver_name, license_number, compliance_status, scan_time "
+            "FROM gate_events ORDER BY scan_time DESC LIMIT 50"
+        )
+        rows = cur.fetchall()
+
+        events = [
+            {
+                "id": row[0],
+                "driver_name": row[1],
+                "license_number": row[2],
+                "status": row[3],
+                "timestamp": row[4].isoformat() if row[4] else None
+            }
+            for row in rows
+        ]
+        return {"events": events}
+    except psycopg2.Error as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve gate events: {exc}") from exc
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
