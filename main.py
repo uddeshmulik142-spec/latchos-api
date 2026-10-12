@@ -1,5 +1,6 @@
 import json
 import os
+import traceback
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Optional, List
@@ -162,40 +163,39 @@ async def verify_credential(file: UploadFile = File(...)):
     if len(file_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 20MB limit.")
 
-    # Temporary Mock mode (used while waiting on live API credits)
-    if os.getenv("MOCK_OCR", "true").lower() == "true":
-        verification_result = ComplianceVerificationResult(
-            document_type=DocumentType.UK_DRIVING_LICENCE,
-            driver_full_name="JOHN SMITH",
-            licence_number="SMITH705234JD9IJ",
-            cpc_expiry_date="2028-09-15",
-            operator_licence_valid=True,
-            git_coverage_limit="£50,000",
-            policy_expiry_date="2027-11-01",
-            verdict=ComplianceStatus.PASSED,
-            verdict_reasons=["Valid Category C+E entitlement", "CPC active until 2028"]
-        )
-        
-        await run_in_threadpool(log_gate_event, verification_result)
-
-        # Trigger gate dispatch action
-        await trigger_gate_barrier_action(verification_result, file.filename)
-        return verification_result
-
-    prompt = (
-        "You are the gate compliance intake engine for LatchOS. "
-        "Inspect UK transport and industrial credentials (UK Driver Licences, Driver Qualification Cards / CPC, "
-        "Goods in Transit (GIT) certificates, and Operator Licences). "
-        "Strict rules:\n"
-        "1. Check all expiration dates against the current date (October 2026).\n"
-        "2. If expired, set verdict to 'EXPIRED'.\n"
-        "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
-        "4. If valid, set to 'PASSED'.\n"
-        "Extract the driver's license details and determine compliance. "
-        "Follow the JSON schema strictly."
-    )
-
     try:
+        # Temporary Mock mode (used while waiting on live API credits)
+        if os.getenv("MOCK_OCR", "true").lower() == "true":
+            verification_result = ComplianceVerificationResult(
+                document_type=DocumentType.UK_DRIVING_LICENCE,
+                driver_full_name="JOHN SMITH",
+                licence_number="SMITH705234JD9IJ",
+                cpc_expiry_date="2028-09-15",
+                operator_licence_valid=True,
+                git_coverage_limit="£50,000",
+                policy_expiry_date="2027-11-01",
+                verdict=ComplianceStatus.PASSED,
+                verdict_reasons=["Valid Category C+E entitlement", "CPC active until 2028"]
+            )
+
+            await run_in_threadpool(log_gate_event, verification_result)
+
+            await trigger_gate_barrier_action(verification_result, file.filename)
+            return verification_result
+
+        prompt = (
+            "You are the gate compliance intake engine for LatchOS. "
+            "Inspect UK transport and industrial credentials (UK Driver Licences, Driver Qualification Cards / CPC, "
+            "Goods in Transit (GIT) certificates, and Operator Licences). "
+            "Strict rules:\n"
+            "1. Check all expiration dates against the current date (October 2026).\n"
+            "2. If expired, set verdict to 'EXPIRED'.\n"
+            "3. If blurry, incomplete, altered, or required coverage is missing, set to 'FLAGGED'.\n"
+            "4. If valid, set to 'PASSED'.\n"
+            "Extract the driver's license details and determine compliance. "
+            "Follow the JSON schema strictly."
+        )
+
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
@@ -207,19 +207,21 @@ async def verify_credential(file: UploadFile = File(...)):
                 response_schema=ComplianceVerificationResult
             )
         )
-        verification_result = ComplianceVerificationResult.model_validate(json.loads(response.text))
+        clean_json = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+        verification_result = ComplianceVerificationResult.model_validate(json.loads(clean_json))
 
         await run_in_threadpool(log_gate_event, verification_result)
 
-        # Trigger gate dispatch action
         await trigger_gate_barrier_action(verification_result, file.filename)
-
         return verification_result
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        print("====== LATCHOS CRASH REPORT ======")
+        traceback.print_exc()
+        print("==================================")
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/health")
